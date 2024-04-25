@@ -40,6 +40,12 @@ def singleton_variable(func):
     return wrapper
 
 
+class Custom_object:
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+            
+            
 @singleton_variable
 class Config:
     def __init__(self):
@@ -57,8 +63,6 @@ class Config:
             self.noparallel,
             self.noautoopen,
             self.dml,
-            self.nocheck,
-            self.update,
         ) = self.arg_parse()
         self.instead = ""
         self.preprocess_per = 3.7
@@ -78,30 +82,13 @@ class Config:
     @staticmethod
     def arg_parse() -> tuple:
         exe = sys.executable or "python"
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--port", type=int, default=7865, help="Listen port")
-        parser.add_argument("--pycmd", type=str, default=exe, help="Python command")
-        parser.add_argument("--colab", action="store_true", help="Launch in colab")
-        parser.add_argument(
-            "--noparallel", action="store_true", help="Disable parallel processing"
-        )
-        parser.add_argument(
-            "--noautoopen",
-            action="store_true",
-            help="Do not open in browser automatically",
-        )
-        parser.add_argument(
-            "--dml",
-            action="store_true",
-            help="torch_dml",
-        )
-        parser.add_argument(
-            "--nocheck", action="store_true", help="Run without checking assets"
-        )
-        parser.add_argument(
-            "--update", action="store_true", help="Update to latest assets"
-        )
-        cmd_opts = parser.parse_args()
+
+        cmd_opts = argparse.Namespace(port=7865,
+                                      pycmd=exe,
+                                      colab=False,
+                                      noparallel=False,
+                                      noautoopen=False,
+                                      dml=False)
 
         cmd_opts.port = cmd_opts.port if 0 <= cmd_opts.port <= 65535 else 7865
 
@@ -112,8 +99,6 @@ class Config:
             cmd_opts.noparallel,
             cmd_opts.noautoopen,
             cmd_opts.dml,
-            cmd_opts.nocheck,
-            cmd_opts.update,
         )
 
     # has_mps is only available in nightly pytorch (for now) and MasOS 12.3+.

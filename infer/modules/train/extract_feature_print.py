@@ -1,4 +1,5 @@
 import os
+import pdb
 import sys
 import traceback
 
@@ -18,6 +19,7 @@ else:
     os.environ["CUDA_VISIBLE_DEVICES"] = str(i_gpu)
     version = sys.argv[6]
     is_half = sys.argv[7].lower() == "true"
+
 import fairseq
 import numpy as np
 import soundfile as sf
@@ -97,6 +99,7 @@ if is_half:
     if device not in ["mps", "cpu"]:
         model = model.half()
 model.eval()
+pdb.set_trace()
 
 todo = sorted(list(os.listdir(wavPath)))[i_part::n_part]
 n = max(1, len(todo) // 10)  # 最多打印十条

@@ -208,6 +208,8 @@ def summarize(
 
 
 def latest_checkpoint_path(dir_path, regex="G_*.pth"):
+    
+    print('PRINTING: ', dir_path)
     f_list = glob.glob(os.path.join(dir_path, regex))
     f_list.sort(key=lambda f: int("".join(filter(str.isdigit, f))))
     x = f_list[-1]
@@ -318,11 +320,15 @@ def get_hparams(init=True):
         "-pd", "--pretrainD", type=str, default="", help="Pretrained Discriminator path"
     )
     parser.add_argument("-g", "--gpus", type=str, default="0", help="split by -")
+    # parser.add_argument("-nmp", "--new_model_path", type=str, required=True, help="split by -")
     parser.add_argument(
         "-bs", "--batch_size", type=int, required=True, help="batch size"
     )
     parser.add_argument(
-        "-e", "--experiment_dir", type=str, required=True, help="experiment dir"
+        "-mp", "--trg_model_path", type=str, required=True, help="experiment dir"
+    )  # -m
+    parser.add_argument(
+        "-dp", "--dataset_path", type=str, required=True, help="experiment dir"
     )  # -m
     parser.add_argument(
         "-sr", "--sample_rate", type=str, required=True, help="sample rate, 32k/40k/48k"
@@ -360,17 +366,15 @@ def get_hparams(init=True):
     )
 
     args = parser.parse_args()
-    name = args.experiment_dir
-    experiment_dir = os.path.join("./logs", args.experiment_dir)
-
-    config_save_path = os.path.join(experiment_dir, "config.json")
+    model_name = os.path.basename(args.trg_model_path)
+    config_save_path = os.path.join(args.trg_model_path, "config.json")
     with open(config_save_path, "r") as f:
         config = json.load(f)
 
     hparams = HParams(**config)
-    hparams.model_dir = hparams.experiment_dir = experiment_dir
+    hparams.model_dir = args.trg_model_path
     hparams.save_every_epoch = args.save_every_epoch
-    hparams.name = name
+    hparams.name = model_name
     hparams.total_epoch = args.total_epoch
     hparams.pretrainG = args.pretrainG
     hparams.pretrainD = args.pretrainD
@@ -382,7 +386,7 @@ def get_hparams(init=True):
     hparams.if_latest = args.if_latest
     hparams.save_every_weights = args.save_every_weights
     hparams.if_cache_data_in_gpu = args.if_cache_data_in_gpu
-    hparams.data.training_files = "%s/filelist.txt" % experiment_dir
+    hparams.data.training_files = os.path.join(args.trg_model_path, "filelist.txt") 
     return hparams
 
 

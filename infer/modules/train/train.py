@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import pdb
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +11,6 @@ sys.path.append(os.path.join(now_dir))
 import datetime
 
 from infer.lib.train import utils
-
 hps = utils.get_hparams()
 os.environ["CUDA_VISIBLE_DEVICES"] = hps.gpus.replace("-", ",")
 n_gpus = len(hps.gpus.split("-"))
@@ -105,6 +105,8 @@ def main():
     os.environ["MASTER_PORT"] = str(randint(20000, 55555))
     children = []
     logger = utils.get_logger(hps.model_dir)
+    run(0, 1, hps, logger)
+    
     for i in range(n_gpus):
         subproc = mp.Process(
             target=run,
@@ -132,7 +134,6 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
     torch.manual_seed(hps.train.seed)
     if torch.cuda.is_available():
         torch.cuda.set_device(rank)
-
     if hps.if_f0 == 1:
         train_dataset = TextAudioLoaderMultiNSFsid(hps.data.training_files, hps.data)
     else:
@@ -205,65 +206,72 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
         net_g = DDP(net_g)
         net_d = DDP(net_d)
 
-    try:  # 如果能加载自动resume
-        _, _, _, epoch_str = utils.load_checkpoint(
-            utils.latest_checkpoint_path(hps.model_dir, "D_*.pth"), net_d, optim_d
-        )  # D多半加载没事
-        if rank == 0:
-            logger.info("loaded D")
-        # _, _, _, epoch_str = utils.load_checkpoint(utils.latest_checkpoint_path(hps.model_dir, "G_*.pth"), net_g, optim_g,load_opt=0)
-        _, _, _, epoch_str = utils.load_checkpoint(
-            utils.latest_checkpoint_path(hps.model_dir, "G_*.pth"), net_g, optim_g
+    if hps.pretrainG != "":
+        
+        if hps.pretrainG.startswith("assets/pretrained"):
+            epochs_completed = 0
+        else:
+            _, _, _, epochs_completed = utils.load_checkpoint(
+                hps.pretrainG, net_g, optim_g
         )
-        global_step = (epoch_str - 1) * len(train_loader)
-        # epoch_str = 1
-        # global_step = 0
-    except:  # 如果首次不能加载，加载pretrain
+
+        if hasattr(net_g, "module"):
+            logger.info(
+                net_g.module.load_state_dict(
+                    torch.load(hps.pretrainG, map_location="cpu")["model"]
+                )
+            )
+        else:
+            logger.info(
+                net_g.load_state_dict(
+                    torch.load(hps.pretrainG, map_location="cpu")["model"]
+                )
+            )
+
+    if hps.pretrainD != "":
+
+        if hasattr(net_d, "module"):
+            logger.info(
+                net_d.module.load_state_dict(
+                    torch.load(hps.pretrainD, map_location="cpu")["model"]
+                )
+            )
+        else:
+            logger.info(
+                net_d.load_state_dict(
+                    torch.load(hps.pretrainD, map_location="cpu")["model"]
+                )
+            )
+        if rank == 0:
+            logger.info("loaded pretrained %s" % (hps.pretrainD))
+                
+
+        print(f'Epoch String: {epochs_completed}')
+        global_step = epochs_completed * len(train_loader)
+
+
+        if rank == 0:
+            logger.info("loaded pretrained %s" % (hps.pretrainG))
+
+    else:  # 如果首次不能加载，加载pretrain
         # traceback.print_exc()
-        epoch_str = 1
+        epochs_completed = 0
         global_step = 0
-        if hps.pretrainG != "":
-            if rank == 0:
-                logger.info("loaded pretrained %s" % (hps.pretrainG))
-            if hasattr(net_g, "module"):
-                logger.info(
-                    net_g.module.load_state_dict(
-                        torch.load(hps.pretrainG, map_location="cpu")["model"]
-                    )
-                )  ##测试不加载优化器
-            else:
-                logger.info(
-                    net_g.load_state_dict(
-                        torch.load(hps.pretrainG, map_location="cpu")["model"]
-                    )
-                )  ##测试不加载优化器
-        if hps.pretrainD != "":
-            if rank == 0:
-                logger.info("loaded pretrained %s" % (hps.pretrainD))
-            if hasattr(net_d, "module"):
-                logger.info(
-                    net_d.module.load_state_dict(
-                        torch.load(hps.pretrainD, map_location="cpu")["model"]
-                    )
-                )
-            else:
-                logger.info(
-                    net_d.load_state_dict(
-                        torch.load(hps.pretrainD, map_location="cpu")["model"]
-                    )
-                )
+    
+    hps.total_epoch = hps.total_epoch + epochs_completed
 
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
-        optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2
+        optim_g, gamma=hps.train.lr_decay, last_epoch=epochs_completed - 1
     )
     scheduler_d = torch.optim.lr_scheduler.ExponentialLR(
-        optim_d, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2
+        optim_d, gamma=hps.train.lr_decay, last_epoch=epochs_completed - 1
     )
 
     scaler = GradScaler(enabled=hps.train.fp16_run)
 
     cache = []
-    for epoch in range(epoch_str, hps.train.epochs + 1):
+ 
+    for epoch in range(epochs_completed+1, hps.train.epochs+1):
         if rank == 0:
             train_and_evaluate(
                 rank,
@@ -392,7 +400,6 @@ def train_and_evaluate(
     else:
         # Loader
         data_iterator = enumerate(train_loader)
-
     # Run steps
     epoch_recorder = EpochRecorder()
     for batch_idx, info in data_iterator:
@@ -562,37 +569,23 @@ def train_and_evaluate(
     # /Run steps
 
     if epoch % hps.save_every_epoch == 0 and rank == 0:
-        if hps.if_latest == 0:
+        if True:
             utils.save_checkpoint(
                 net_g,
                 optim_g,
                 hps.train.learning_rate,
                 epoch,
-                os.path.join(hps.model_dir, "G_{}.pth".format(global_step)),
+                os.path.join(hps.model_dir, "G_{}Epochs_{}Steps.pth".format(epoch, global_step)),
             )
             utils.save_checkpoint(
                 net_d,
                 optim_d,
                 hps.train.learning_rate,
                 epoch,
-                os.path.join(hps.model_dir, "D_{}.pth".format(global_step)),
+                os.path.join(hps.model_dir, "D_{}Epochs_{}Steps.pth".format(epoch, global_step)),
             )
-        else:
-            utils.save_checkpoint(
-                net_g,
-                optim_g,
-                hps.train.learning_rate,
-                epoch,
-                os.path.join(hps.model_dir, "G_{}.pth".format(2333333)),
-            )
-            utils.save_checkpoint(
-                net_d,
-                optim_d,
-                hps.train.learning_rate,
-                epoch,
-                os.path.join(hps.model_dir, "D_{}.pth".format(2333333)),
-            )
-        if rank == 0 and hps.save_every_weights == "1":
+
+        if hps.save_every_weights == "1":
             if hasattr(net_g, "module"):
                 ckpt = net_g.module.state_dict()
             else:
@@ -606,8 +599,9 @@ def train_and_evaluate(
                         ckpt,
                         hps.sample_rate,
                         hps.if_f0,
-                        hps.name + "_e%s_s%s" % (epoch, global_step),
+                        hps.model_dir,
                         epoch,
+                        global_step,
                         hps.version,
                         hps,
                     ),
@@ -619,18 +613,18 @@ def train_and_evaluate(
     if epoch >= hps.total_epoch and rank == 0:
         logger.info("Training is done. The program is closed.")
 
-        if hasattr(net_g, "module"):
-            ckpt = net_g.module.state_dict()
-        else:
-            ckpt = net_g.state_dict()
-        logger.info(
-            "saving final ckpt:%s"
-            % (
-                savee(
-                    ckpt, hps.sample_rate, hps.if_f0, hps.name, epoch, hps.version, hps
-                )
-            )
-        )
+        # if hasattr(net_g, "module"):
+        #     ckpt = net_g.module.state_dict()
+        # else:
+        #     ckpt = net_g.state_dict()
+        # logger.info(
+        #     "saving final ckpt:%s"
+        #     % (
+        #         savee(
+        #             ckpt, hps.sample_rate, hps.if_f0, hps.model_dir, epoch, global_step, hps.version, hps
+        #         )
+        #     )
+        # )
         sleep(1)
         os._exit(2333333)
 

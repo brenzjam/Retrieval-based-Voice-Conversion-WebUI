@@ -10,7 +10,7 @@ from i18n.i18n import I18nAuto
 i18n = I18nAuto()
 
 
-def savee(ckpt, sr, if_f0, name, epoch, version, hps):
+def savee(ckpt, sr, if_f0, name, epoch, global_step, version, hps):
     try:
         opt = OrderedDict()
         opt["weight"] = {}
@@ -42,7 +42,13 @@ def savee(ckpt, sr, if_f0, name, epoch, version, hps):
         opt["sr"] = sr
         opt["f0"] = if_f0
         opt["version"] = version
-        torch.save(opt, "assets/weights/%s.pth" % name)
+        ckpt_name = f"M_{epoch}Epochs_{global_step}Steps.pth"
+        save_path = os.path.join(name,
+                                 ckpt_name
+        )
+        
+        print("Saving entire checkpoint to %s" % save_path)
+        torch.save(opt, save_path)
         return "Success."
     except:
         return traceback.format_exc()
